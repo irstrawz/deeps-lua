@@ -84,11 +84,17 @@ clock rather than reading as a flat zero.
 equals one attempt. A "miss" means the action dealt no damage, so it also
 captures parries, guards and shadows.
 
+**Pet damage is credited to the owner.** A pet acts under its own server id,
+so it is mapped back to its owner by chaining `GetMemberTargetIndex` →
+`GetPetTargetIndex` → `GetServerId`, rebuilt per packet so resummons and BST
+charms are picked up without stale state. Pet output is tracked under its own
+`Pet` label rather than merged into the owner's melee, and pet swings are
+excluded from the owner's accuracy. Blood pacts, ready moves and automaton
+attacks arrive as monster ability categories (11 and 13), which are accepted
+only once the actor has been confirmed as a party member's pet.
+
 ## Known gaps
 
-- Pet damage is not attributed. The pet is the actor and is not in the party
-  list, so BST and SMN pet contributions are dropped rather than credited to
-  the owner.
 - Non-party players are not tracked.
 - Weaponskills, spells and abilities are excluded from accuracy, as they do
   not map cleanly onto an attempt count.

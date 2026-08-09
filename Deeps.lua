@@ -21,7 +21,7 @@
 
 addon.name    = 'Deeps';
 addon.author  = 'Lua damage meter for Ashita v4';
-addon.version = '1.1.0';
+addon.version = '1.2.0';
 addon.desc    = 'Damage meters for yourself, your party and your alliance.';
 
 require('common');
@@ -107,6 +107,14 @@ local CATEGORY = {
     [3] = 'Weaponskill',
     [4] = 'Magic',
     [6] = 'Ability',
+};
+
+-- Pets additionally use the monster ability categories for blood pacts,
+-- ready moves and automaton attacks. Safe to accept only because the actor
+-- has already been confirmed to be a party member's pet.
+local PET_CATEGORY = {
+    [1] = true, [2] = true, [3] = true, [4] = true,
+    [6] = true, [11] = true, [13] = true,
 };
 
 ----------------------------------------------------------------------
@@ -220,12 +228,51 @@ local function memberLookup()
     return lookup;
 end
 
-local function allMembers()
+-- Pets act under their own server id, so anything they deal is credited to
+-- nobody unless the pet is mapped back to its owner first. GetMemberTargetIndex
+-- gives the owner's entity slot, GetPetTargetIndex that slot's pet, and
+-- GetServerId turns the pet back into the id the action packet carries.
+local function petLookup()
+    local lookup = {};
+    pcall(function ()
+        local party  = AshitaCore:GetMemoryManager():GetParty();
+        local entity = AshitaCore:GetMemoryManager():GetEntity();
+        local last   = config.partyOnly[1] and 5 or 17;
+
+        for i = 0, last do
+            local serverId = party:GetMemberServerId(i);
+            local name     = party:GetMemberName(i);
+            if (serverId ~= nil and serverId ~= 0 and name ~= nil and name ~= '') then
+                local ownerIndex = party:GetMemberTargetIndex(i);
+                if (ownerIndex ~= nil and ownerIndex > 0) then
+                    local petIndex = entity:GetPetTargetIndex(ownerIndex);
+                    if (petIndex ~= nil and petIndex > 0) then
+                        local petId = entity:GetServerId(petIndex);
+                        if (petId ~= nil and petId ~= 0) then
+                            lookup[petId] = { name = name, job = party:GetMemberMainJob(i) };
+                        end
+                    end
+                end
+            end
+        end
+    end);
+    return lookup;
+end
+
+-- Every id that counts as "one of ours" for the purpose of ignoring actions
+-- aimed at it. Pets are included so that curing or buffing a pet is not
+-- mistaken for damage dealt to an enemy.
+local function allMembers(pets)
     local party  = AshitaCore:GetMemoryManager():GetParty();
     local lookup = {};
     for i = 0, 17 do
         local ok, id = pcall(function () return party:GetMemberServerId(i); end);
         if (ok and id ~= nil and id ~= 0) then
+            lookup[id] = true;
+        end
+    end
+    if (pets ~= nil) then
+        for id, _ in pairs(pets) do
             lookup[id] = true;
         end
     end
@@ -280,7 +327,7 @@ local function entryFor(name, job)
     return entry;
 end
 
-local function record(name, job, category, damage, swingKind)
+local function record(name, job, label, damage, swingKind)
     local now = os.clock();
 
     if (tracker.lastAt ~= nil and config.idleSeconds[1] > 0) then
@@ -290,7 +337,7 @@ local function record(name, job, category, damage, swingKind)
     end
 
     local entry = entryFor(name, job);
-    local label = CATEGORY[category] or 'Other';
+    label = label or 'Other';
 
     if (damage > 0) then
         entry.damage         = entry.damage + damage;
@@ -353,12 +400,19 @@ ashita.events.register('packet_in', 'deeps_packet_in', function (e)
         end
 
         local members = memberLookup();
-        local actor   = members[action.actor];
+        local pets    = petLookup();
+
+        local actor  = members[action.actor];
+        local viaPet = false;
+        if (actor == nil) then
+            actor  = pets[action.actor];
+            viaPet = (actor ~= nil);
+        end
         if (actor == nil) then
             return;         -- not one of ours
         end
 
-        local everyone = allMembers();
+        local everyone = allMembers(pets);
 
         for _, target in ipairs(action.targets) do
             -- A member on the receiving end means a cure, a buff or friendly
@@ -369,18 +423,28 @@ ashita.events.register('packet_in', 'deeps_packet_in', function (e)
 
                     if (debugMode == true) then
                         print(chat.header(addon.name):append(chat.message(
-                            ('debug: %s cat=%d msg=%d param=%d extra=%d'):fmt(
-                                actor.name, action.category, act.message, act.param, act.extra))));
+                            ('debug: %s%s cat=%d msg=%d param=%d extra=%d'):fmt(
+                                actor.name, viaPet and ' (pet)' or '',
+                                action.category, act.message, act.param, act.extra))));
                     end
 
-                    if (CATEGORY[action.category] ~= nil) then
+                    if (viaPet == true) then
+                        -- Pets also use the monster ability categories for
+                        -- blood pacts and ready moves. Their output is kept
+                        -- under one label rather than mixed into the owner's
+                        -- own melee, and their swings are left out of the
+                        -- owner's accuracy.
+                        if (PET_CATEGORY[action.category] ~= nil) then
+                            record(actor.name, actor.job, 'Pet', damage, nil);
+                        end
+                    elseif (CATEGORY[action.category] ~= nil) then
                         local swingKind = nil;
                         if (action.category == 1) then
                             swingKind = 'Melee';
                         elseif (action.category == 2) then
                             swingKind = 'Ranged';
                         end
-                        record(actor.name, actor.job, action.category, damage, swingKind);
+                        record(actor.name, actor.job, CATEGORY[action.category], damage, swingKind);
                     end
                 end
             end
