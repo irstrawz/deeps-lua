@@ -49,29 +49,35 @@ local ACTIVE_GAP = 10;
 ----------------------------------------------------------------------
 -- Jobs
 ----------------------------------------------------------------------
+-- Every pair is at least 0.216 apart in RGB distance, checked across all
+-- 231 combinations, so no two jobs read as the same colour on a bar.
+--
+-- BLM is as close to black as is usable: the window background is dark, so
+-- a true black bar would make the fill length impossible to judge. It is
+-- still comfortably the darkest, with DRK lifted just clear of it.
 local JOBS = {
-    [1]  = { 'WAR', { 0.72, 0.24, 0.22 } },
-    [2]  = { 'MNK', { 0.85, 0.52, 0.18 } },
-    [3]  = { 'WHM', { 0.86, 0.86, 0.80 } },
-    [4]  = { 'BLM', { 0.52, 0.34, 0.78 } },
-    [5]  = { 'RDM', { 0.90, 0.48, 0.58 } },
-    [6]  = { 'THF', { 0.50, 0.78, 0.38 } },
-    [7]  = { 'PLD', { 0.48, 0.70, 0.90 } },
-    [8]  = { 'DRK', { 0.60, 0.16, 0.28 } },
-    [9]  = { 'BST', { 0.72, 0.50, 0.26 } },
-    [10] = { 'BRD', { 0.38, 0.72, 0.66 } },
-    [11] = { 'RNG', { 0.32, 0.66, 0.34 } },
-    [12] = { 'SAM', { 0.88, 0.40, 0.38 } },
-    [13] = { 'NIN', { 0.28, 0.40, 0.74 } },
-    [14] = { 'DRG', { 0.38, 0.44, 0.88 } },
-    [15] = { 'SMN', { 0.32, 0.76, 0.76 } },
-    [16] = { 'BLU', { 0.34, 0.50, 0.92 } },
-    [17] = { 'COR', { 0.88, 0.76, 0.32 } },
-    [18] = { 'PUP', { 0.76, 0.64, 0.48 } },
-    [19] = { 'DNC', { 0.90, 0.54, 0.70 } },
-    [20] = { 'SCH', { 0.60, 0.80, 0.48 } },
-    [21] = { 'GEO', { 0.64, 0.80, 0.58 } },
-    [22] = { 'RUN', { 0.76, 0.44, 0.86 } },
+    [1]  = { 'WAR', { 0.82, 0.16, 0.16 } },  -- red
+    [2]  = { 'MNK', { 0.93, 0.55, 0.13 } },  -- orange
+    [3]  = { 'WHM', { 0.96, 0.96, 0.93 } },  -- white
+    [4]  = { 'BLM', { 0.24, 0.22, 0.30 } },  -- near-black
+    [5]  = { 'RDM', { 0.95, 0.45, 0.55 } },  -- rose
+    [6]  = { 'THF', { 0.65, 0.87, 0.25 } },  -- lime
+    [7]  = { 'PLD', { 0.42, 0.72, 0.96 } },  -- sky blue
+    [8]  = { 'DRK', { 0.60, 0.10, 0.22 } },  -- dark red
+    [9]  = { 'BST', { 0.55, 0.36, 0.16 } },  -- brown
+    [10] = { 'BRD', { 0.15, 0.72, 0.68 } },  -- teal
+    [11] = { 'RNG', { 0.18, 0.60, 0.25 } },  -- green
+    [12] = { 'SAM', { 0.90, 0.42, 0.30 } },  -- coral
+    [13] = { 'NIN', { 0.22, 0.28, 0.62 } },  -- navy
+    [14] = { 'DRG', { 0.72, 0.60, 0.95 } },  -- light purple
+    [15] = { 'SMN', { 0.25, 0.88, 0.82 } },  -- aqua
+    [16] = { 'BLU', { 0.25, 0.45, 0.90 } },  -- blue
+    [17] = { 'COR', { 0.90, 0.78, 0.25 } },  -- gold
+    [18] = { 'PUP', { 0.78, 0.68, 0.50 } },  -- tan
+    [19] = { 'DNC', { 0.88, 0.30, 0.80 } },  -- magenta
+    [20] = { 'SCH', { 0.55, 0.80, 0.60 } },  -- pale green
+    [21] = { 'GEO', { 0.60, 0.62, 0.25 } },  -- olive
+    [22] = { 'RUN', { 0.58, 0.30, 0.85 } },  -- violet
 };
 
 ----------------------------------------------------------------------
@@ -421,13 +427,10 @@ ashita.events.register('packet_in', 'deeps_packet_in', function (e)
                 for _, act in ipairs(target.actions) do
                     local damage = act.param + act.extra;
 
-                    if (debugMode == true) then
-                        print(chat.header(addon.name):append(chat.message(
-                            ('debug: %s%s cat=%d msg=%d param=%d extra=%d'):fmt(
-                                actor.name, viaPet and ' (pet)' or '',
-                                action.category, act.message, act.param, act.extra))));
-                    end
-
+                    -- Work out what this action counts as before recording it,
+                    -- so debug output can report the decision rather than just
+                    -- the raw fields.
+                    local label, swingKind;
                     if (viaPet == true) then
                         -- Pets also use the monster ability categories for
                         -- blood pacts and ready moves. Their output is kept
@@ -435,16 +438,34 @@ ashita.events.register('packet_in', 'deeps_packet_in', function (e)
                         -- own melee, and their swings are left out of the
                         -- owner's accuracy.
                         if (PET_CATEGORY[action.category] ~= nil) then
-                            record(actor.name, actor.job, 'Pet', damage, nil);
+                            label = 'Pet';
                         end
                     elseif (CATEGORY[action.category] ~= nil) then
-                        local swingKind = nil;
+                        label = CATEGORY[action.category];
                         if (action.category == 1) then
                             swingKind = 'Melee';
                         elseif (action.category == 2) then
                             swingKind = 'Ranged';
                         end
-                        record(actor.name, actor.job, CATEGORY[action.category], damage, swingKind);
+                    end
+
+                    if (debugMode == true) then
+                        local outcome;
+                        if (label == nil) then
+                            outcome = 'IGNORED';
+                        elseif (damage > 0) then
+                            outcome = ('COUNTED +%d as %s'):fmt(damage, label);
+                        else
+                            outcome = ('no damage (%s)'):fmt(label);
+                        end
+                        print(chat.header(addon.name):append(chat.message(
+                            ('debug: %s%s cat=%d msg=%d param=%d extra=%d -> %s'):fmt(
+                                actor.name, viaPet and ' (pet)' or '',
+                                action.category, act.message, act.param, act.extra, outcome))));
+                    end
+
+                    if (label ~= nil) then
+                        record(actor.name, actor.job, label, damage, swingKind);
                     end
                 end
             end
@@ -546,7 +567,16 @@ ashita.events.register('d3d_present', 'deeps_present', function ()
         if (tracker.total == 0) then
             imgui.TextColored(DIM, 'Waiting for damage...');
         else
-            table.sort(tracker.order, function (a, b) return a.damage > b.damage; end);
+            -- table.sort is not stable, so equal damage leaves the relative
+            -- order of two rows undefined and they swap places every frame.
+            -- Falling back to the name gives a total order, which pins tied
+            -- players in place instead of letting them flicker.
+            table.sort(tracker.order, function (a, b)
+                if (a.damage ~= b.damage) then
+                    return a.damage > b.damage;
+                end
+                return a.name < b.name;
+            end);
 
             local best = tracker.order[1].damage;
             if (best <= 0) then best = 1; end
