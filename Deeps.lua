@@ -115,6 +115,20 @@ local CATEGORY = {
     [6] = 'Ability',
 };
 
+-- Magic is the one category where param routinely is not damage. An
+-- enfeeble or a debuff song lands on the enemy, so the target check cannot
+-- filter it, and param carries the status effect id instead. A BRD casting
+-- Elegy produced "msg=85 param=192", which was being counted as 192 damage.
+--
+-- So category 4 requires an explicit damage message. Anything not listed
+-- here is treated as a status effect and ignored; /dps debug names the
+-- message id, so a nuke that goes uncounted is easy to spot and add.
+--   2   spell damage
+--   252 magic burst damage
+local MAGIC_DAMAGE = {
+    [2] = true, [252] = true,
+};
+
 -- Pets additionally use the monster ability categories for blood pacts,
 -- ready moves and automaton attacks. Safe to accept only because the actor
 -- has already been confirmed to be a party member's pet.
@@ -430,7 +444,7 @@ ashita.events.register('packet_in', 'deeps_packet_in', function (e)
                     -- Work out what this action counts as before recording it,
                     -- so debug output can report the decision rather than just
                     -- the raw fields.
-                    local label, swingKind;
+                    local label, swingKind, ignoredWhy;
                     if (viaPet == true) then
                         -- Pets also use the monster ability categories for
                         -- blood pacts and ready moves. Their output is kept
@@ -449,10 +463,18 @@ ashita.events.register('packet_in', 'deeps_packet_in', function (e)
                         end
                     end
 
+                    -- Reject magic whose message is not a damage message; the
+                    -- number is a status effect id, not a hit.
+                    if (label ~= nil) and (action.category == 4)
+                        and (MAGIC_DAMAGE[act.message] == nil) then
+                        label      = nil;
+                        ignoredWhy = 'status effect, not damage';
+                    end
+
                     if (debugMode == true) then
                         local outcome;
                         if (label == nil) then
-                            outcome = 'IGNORED';
+                            outcome = ignoredWhy and ('IGNORED - ' .. ignoredWhy) or 'IGNORED';
                         elseif (damage > 0) then
                             outcome = ('COUNTED +%d as %s'):fmt(damage, label);
                         else
