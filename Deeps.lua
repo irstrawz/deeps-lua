@@ -21,7 +21,7 @@
 
 addon.name    = 'Deeps';
 addon.author  = 'Lua damage meter for Ashita v4';
-addon.version = '1.2.0';
+addon.version = '1.3.0';
 addon.desc    = 'Damage meters for yourself, your party and your alliance.';
 
 require('common');
